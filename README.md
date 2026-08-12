@@ -9,18 +9,25 @@
 
 ## 🚀 Como Usar (Instalação e Execução)
 
-1. **Instale as Dependências:**
+1. **Clone o Repositório:**
+   Primeiro, baixe o código fonte do projeto para a sua máquina.
+   ```bash
+   git clone https://github.com/Lapsx/PINO_Polymer_Webmap.git
+   cd PINO_Polymer_Webmap
+   ```
+
+2. **Instale as Dependências:**
    O backend de inferência requer bibliotecas padrão de Machine Learning e APIs web.
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Baixe os Pesos do Modelo:**
+3. **Baixe os Pesos do Modelo:**
    O arquivo do modelo treinado está hospedado na aba de **Releases** deste repositório (lado direito da página no GitHub).
    * Baixe o arquivo `pino_v3_phase5_physics.pth` do release `v1.0-alpha`.
    * Salve-o dentro da pasta `weights/` na raiz do projeto (crie a pasta se não existir).
 
-3. **Inicie o WebApp (Ambiente Interativo):**
+4. **Inicie o WebApp (Ambiente Interativo):**
    Para explorar as predições de densidade polimérica em tempo real, utilize o script de inicialização automático:
    ```bash
    bash iniciar_webapp.sh
@@ -109,18 +116,25 @@ Abaixo estão os passos práticos detalhados na nossa "Pipeline PINO V3", a sere
 
 ## 🚀 How to Use (Installation and Execution)
 
-1. **Install Dependencies:**
+1. **Clone the Repository:**
+   First, download the source code to your local machine.
+   ```bash
+   git clone https://github.com/Lapsx/PINO_Polymer_Webmap.git
+   cd PINO_Polymer_Webmap
+   ```
+
+2. **Install Dependencies:**
    The inference backend requires standard Machine Learning and Web API libraries.
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Download the Model Weights:**
+3. **Download the Model Weights:**
    The trained `.pth` file is hosted in the **Releases** section of this repository (on the right sidebar of the GitHub page).
    * Download `pino_v3_phase5_physics.pth` from the `v1.0-alpha` release.
    * Place it inside the `weights/` folder at the root of the project (create the folder if it doesn't exist).
 
-3. **Launch the WebApp (Interactive Sandbox):**
+4. **Launch the WebApp (Interactive Sandbox):**
    To explore polymer density predictions in real-time, use the automated startup script:
    ```bash
    bash iniciar_webapp.sh
