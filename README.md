@@ -4,6 +4,26 @@
 
 # 🇧🇷 PolyFields-PINO (Real-Time Polymer Density Predictor for Asymmetric Multipole Potentials Using Physics-Informed Neural Operators)
 
+> ⚠️ **Status: Work in Progress (WIP)**
+> O treinamento final do pipeline encontra-se temporariamente pausado devido a limitações severas de acesso a hardware de processamento (clusters de GPU). O repositório e os scripts estão sendo disponibilizados para que a comunidade científica possa testar, validar a física e evoluir a arquitetura de forma colaborativa.
+
+## 🚀 Como Usar (Instalação e Execução)
+
+1. **Instale as Dependências:**
+   O backend de inferência requer bibliotecas padrão de Machine Learning e APIs web.
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Inicie o WebApp (Ambiente Interativo):**
+   Para explorar as predições de densidade polimérica em tempo real, utilize o script de inicialização automático:
+   ```bash
+   bash iniciar_webapp.sh
+   ```
+   *(Este comando inicializará o servidor FastAPI no backend e abrirá automaticamente o visualizador `index.html` no seu navegador).*
+
+---
+
 ## Objetivo do Projeto
 
 O **PolyFields-PINO** é a versão mais recente da arquitetura de predição de densidades poliméricas. Nascido como um Fourier Neural Operator (FNO) clássico em versões anteriores, o projeto tem como objetivo principal alterar **o paradigma de mapeamento puramente estatístico (dados para dados) usado anteriormente, em direção a um aprendizado profundo guiado pelas leis fundamentais da mecanica estatistica**.
@@ -78,6 +98,26 @@ Abaixo estão os passos práticos detalhados na nossa "Pipeline PINO V3", a sere
 </div>
 
 # 🇺🇸 PolyFields-PINO - English Version
+
+> ⚠️ **Status: Work in Progress (WIP)**
+> The final training of the pipeline is temporarily paused due to strict GPU hardware limitations. The repository and scripts are being made available so the scientific community can test, validate the physics, and collaboratively evolve the architecture.
+
+## 🚀 How to Use (Installation and Execution)
+
+1. **Install Dependencies:**
+   The inference backend requires standard Machine Learning and Web API libraries.
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Launch the WebApp (Interactive Sandbox):**
+   To explore polymer density predictions in real-time, use the automated startup script:
+   ```bash
+   bash iniciar_webapp.sh
+   ```
+   *(This will initialize the FastAPI server on the backend and automatically open the `index.html` viewer in your browser).*
+
+---
 
 ## Project Objective
 

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PINO Polymer Sandbox (V3)</title>
+    <!-- Fontes modernas -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style_v4.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PINO Polymer Sandbox (V3)</h1>
+            <p>Posicione campos locais e veja a nuvem polimérica reagir em milissegundos.</p>
+            
+            <div class="tabs-container">
+                <button class="tab-btn active" data-tab="sandbox-view">Simulador</button>
+                <button class="tab-btn" data-tab="history-view">Histórico de Treinamento</button>
+                <button class="tab-btn" data-tab="hts-view" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">High-Throughput Screening</button>
+            </div>
+        </header>
+
+        <main class="dashboard-vertical tab-content active" id="sandbox-view">
+            <!-- Painel de Controle -->
+            <nav class="control-panel glass-panel" style="display: flex; flex-direction: column; gap: 1.5rem; width: 100%;">
+                
+                <!-- Polímero -->
+                <div style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; width: 100%;">
+                    <h2 style="margin: 0; min-width: 200px; font-size: 1.2rem; color: #f8fafc;">Parâmetros do Polímero:</h2>
+                    
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Comprimento de Kuhn (b) <span class="info-icon" title="Controla a rigidez local da cadeia do polímero. Valores maiores indicam polímeros mais rígidos.">ℹ️</span></label>
+                        <div class="slider-container">
+                            <span id="kuhnValue">1.0</span>
+                            <input type="range" id="kuhnSlider" min="0.5" max="2.0" value="1.0" step="0.1">
+                        </div>
+                    </div>
+
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Comprimento de Debye (κ) <span class="info-icon" title="Controla o quão longe as interações eletrostáticas atuam (blindagem iônica). Valores menores = interações de longo alcance.">ℹ️</span></label>
+                        <div class="slider-container">
+                            <span id="debyeValue">1.0</span>
+                            <input type="range" id="debyeSlider" min="0.1" max="5.0" value="1.0" step="0.1">
+                        </div>
+                    </div>
+
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Flory-Huggins Efetivo (u) <span class="info-icon" title="Controla a qualidade do solvente. u < 0 significa bom solvente (polímero incha), u > 0 significa mau solvente (polímero colapsa).">ℹ️</span></label>
+                        <div class="slider-container">
+                            <span id="floryValue">0.0</span>
+                            <input type="range" id="florySlider" min="-1.0" max="1.0" value="0.0" step="0.1">
+                        </div>
+                    </div>
+                    
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 250px;">
+                        <label>Carga do Polímero (Fourier) <span class="info-icon" title="Controla a distribuição de cargas ao longo da cadeia polimérica">ℹ️</span></label>
+                        <select id="polymerChargeType" style="width: 100%; padding: 0.5rem; background: #1e293b; color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;">
+                            <option value="0">Homogêneo (Neutro / Uniforme)</option>
+                            <option value="1">Diblock (Metade +, Metade -)</option>
+                            <option value="4">Alternado (Alta Frequência)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Intensidade da Carga <span class="info-icon" title="Define a força da carga do esqueleto do polímero. Valores altos aumentam a interação com os campos externos.">ℹ️</span></label>
+                        <div class="slider-container">
+                            <span id="polymerChargeIntensityValue">1.0</span>
+                            <input type="range" id="polymerChargeIntensitySlider" min="0.0" max="2.0" value="1.0" step="0.1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cargas -->
+                <div style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; width: 100%;">
+                    <h2 style="margin: 0; min-width: 200px; font-size: 1.2rem; color: #f8fafc;">Cargas Locais:</h2>
+                    
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Polaridade (Força da Carga) <span class="info-icon" title="Define se a carga inserida será atrativa ou repulsiva, e a sua força.">ℹ️</span></label>
+                        <div class="slider-container">
+                            <span id="chargeValue">Atrativo (Positivo)</span>
+                            <input type="range" id="chargeSlider" min="-10" max="10" value="5" step="0.5">
+                        </div>
+                    </div>
+
+                    <div class="control-group" style="margin: 0; flex: 1; min-width: 150px;">
+                        <label>Raio de Ação (Abertura) <span class="info-icon" title="Define o quão largo é o campo potencial ao redor da carga inserida.">ℹ️</span></label>
+                        <div class="slider-container">
+                            <input type="range" id="radiusSlider" min="1" max="15" value="5" step="1">
+                        </div>
+                    </div>
+
+                    <div style="margin: 0; flex: 1; min-width: 200px; display: flex; align-items: center; gap: 1rem; justify-content: flex-end;">
+                        <button id="clearBtn" class="btn btn-danger" style="padding: 0.5rem 1rem; width: auto; font-size: 0.9rem;">Limpar Tudo</button>
+                        <div class="status-box" style="margin: 0; padding: 0.5rem 1rem;">
+                            <span id="latency">Latência PINO: -- ms</span>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Painel de Visualização e Métricas -->
+                        <section class="visuals maps-grid">
+                <div class="canvas-container glass-panel">
+                    <h3>Campo V(x,z) <span class="badge">In</span> <span class="info-icon" title="O círculo escuro no centro representa uma nanopartícula sólida (obstáculo). O polímero é representado como uma nuvem de densidade ao seu redor, no gráfico de Densidade.">ℹ️</span></h3>
+                    <canvas id="inputCanvas" width="300" height="300"></canvas>
+                </div>
+
+                <div class="canvas-container glass-panel">
+                    <h3>Densidade φ <span class="badge" style="background:#818cf8;">Out</span> <span class="info-icon" title="Representa o Fator de Concentração Local (Concentração por unidade de área). Um valor alto (ex: 1000) significa que a massa do polímero colapsou e está 1000 vezes mais espremida naquele ponto em comparação a uma distribuição uniforme pela tela.">ℹ️</span></h3>
+                    <div class="output-wrapper" style="width:300px; height:300px;">
+                        <img id="outputImage" src="" alt="..." style="display: none;">
+                        <div id="loading" class="spinner" style="display: none;"></div>
+                    </div>
+                </div>
+                
+                <div class="canvas-container glass-panel">
+                    <h3>Suscetibilidade Linear (dφ/dV) <span class="info-icon" title="Mostra a resposta direcional da fase do polímero. Vermelho (positivo) indica que uma carga ali causaria colapso; Azul (negativo) causaria inchaço.">ℹ️</span></h3>
+                    <div class="output-wrapper" style="width:300px; height:300px;">
+                        <img id="d1Image" src="" alt="..." style="display: none;">
+                        <div id="d1Loading" class="spinner" style="display: none;"></div>
+                    </div>
+                </div>
+                
+                <div class="canvas-container glass-panel">
+                    <h3>Suscetibilidade Não-Linear (d²φ/dV²) <span class="info-icon" title="Mapeia a fragilidade estrutural do polímero. Verde (positivo): instabilidade onde pequenas cargas causam transições abruptas. Rosa (negativo): saturação e resistência a mudanças.">ℹ️</span></h3>
+                    <div class="output-wrapper" style="width:300px; height:300px;">
+                        <img id="d2Image" src="" alt="..." style="display: none;">
+                        <div id="d2Loading" class="spinner" style="display: none;"></div>
+                    </div>
+                </div>
+            </section>
+            
+            <section class="metrics-section" style="display: flex; gap: 2rem; margin-top: 2rem; width: 100%;">
+<div style="display: flex; flex-direction: row; flex-wrap: nowrap; gap: 2rem; width: 100%; justify-content: flex-start; align-items: stretch;">
+                    <div class="metrics-container glass-panel" style="width: 400px; display: flex; flex-direction: column;">
+                        <h3>Termodinâmica e Fase</h3>
+                        <div id="phaseThermometer" class="alert-box">Fase: <span id="phaseValue">Aguardando...</span></div>
+                        <ul class="metrics-list">
+                            <li>Massa Total: <span id="massValue">--</span></li>
+                            <li>Raio de Giração (Rg): <span id="rgValue">--</span></li>
+                            <li>Centro de Massa (X, Z): <span id="comValue">--</span></li>
+                        </ul>
+                        
+                        <div style="margin-top: 1rem;">
+                            <label style="color: #94a3b8; font-size: 0.9rem;">Tipo de Experimento:</label>
+                            <select id="experimentType" style="width: 100%; padding: 0.5rem; background: #1e293b; color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; margin-top: 0.5rem; margin-bottom: 0.5rem;">
+                                <option value="u">Transição de Fase (Coil-Globule)</option>
+                                <option value="kappa">Efeito de Salinidade Estrutural (Debye)</option>
+                                <option value="kappa_adsorption">Transição Adsorvido/Desorvido vs Salinidade</option>
+                                <option value="b">Espectroscopia de Rigidez (Kuhn)</option>
+                            </select>
+                            <button id="phaseDiagramBtn" class="btn btn-secondary" style="width: 100%; margin-bottom: 0.5rem;">Varredura de Parâmetro Físico (Polímero)</button>
+                            <button id="multipoleSweepBtn" class="btn btn-secondary" style="width: 100%; background: #9333ea; color: white;">Extrair Curva Crítica (Multipolos n=2 a 10)</button>
+                        </div>
+                        
+                        <hr style="border-color: rgba(255,255,255,0.1); margin: 1rem 0;">
+                        
+                        <h3>Comparador de Soluções</h3>
+                        <p class="instruction">Salve um estado e altere os parâmetros para comparar.</p>
+                        <div class="button-group" style="margin-top: 0.5rem;">
+                            <button id="saveStateBtn" class="btn btn-primary">Salvar Estado Atual (A)</button>
+                            <button id="compareBtn" class="btn btn-secondary" disabled>Analisar Diferença (Atual - A)</button>
+                        </div>
+                    </div>
+
+                    <div class="canvas-container glass-panel" id="phaseDiagramContainer" style="display: none;">
+                        <h3>Laboratório Virtual <span class="badge" style="background: #38bdf8; color: black;">Experimento</span></h3>
+                        <p class="instruction">Análise Termodinâmica e Estrutural (Tempo Real)</p>
+                        <div class="output-wrapper" style="width: 550px; height: 350px;">
+                            <img id="phaseDiagramImage" src="" alt="Resultado do Experimento" style="display: none; width: 100%; height: 100%; object-fit: contain;">
+                            <div id="phaseDiagramLoading" class="spinner" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="canvas-container glass-panel" id="diffContainer" style="display: none;">
+                    <h3>Mapa de Diferença <span class="badge" style="background: #eab308; color: black;">Comparação</span></h3>
+                    <p class="instruction">Estado Atual (B) subtraído do Estado Salvo (A)</p>
+                    <div class="output-wrapper">
+                        <img id="diffImage" src="" alt="Diferença..." style="display: none;">
+                        <div id="diffLoading" class="spinner" style="display: none;"></div>
+                    </div>
+                </div>
+            </section>
+                    </section>
+        </main>
+        
+        <main class="dashboard tab-content" id="history-view">
+            <section class="visuals" style="flex: 1; justify-content: center;">
+                <div class="canvas-container glass-panel">
+                    <h3>Histórico de Treinamento (Loss)</h3>
+                    <p class="instruction">PINO Sobolev Phase 2</p>
+                    <div class="output-wrapper" style="width: 500px; height: 500px;">
+                        <img id="lossImage" src="" alt="Loss history" style="display: none;">
+                        <div id="lossLoading" class="spinner"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <main class="dashboard-vertical tab-content" id="hts-view">
+            <section class="glass-panel" style="padding: 2rem; display: flex; flex-direction: column; gap: 1.5rem; text-align: center;">
+                <h2>Triagem Rápida via IA (HTS)</h2>
+                <p>Faça o upload de um arquivo JSON contendo milhares de configurações termodinâmicas. A rede neural processará todas em lote e retornará um arquivo CSV com as métricas (Massa, Raio de Giração, Fase) calculadas instantaneamente.</p>
+                
+                <div style="border: 2px dashed rgba(255,255,255,0.2); border-radius: 12px; padding: 3rem; background: rgba(0,0,0,0.2);">
+                    <input type="file" id="htsFileInput" accept=".json" style="display: none;">
+                    <button id="htsUploadBtn" class="btn" style="background: #10b981; padding: 1rem 2rem; font-size: 1.2rem;">Carregar Batch JSON</button>
+                    <p id="htsStatus" style="margin-top: 1rem; color: #94a3b8;">Aguardando arquivo...</p>
+                </div>
+                
+                <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; text-align: left; font-family: monospace; font-size: 0.9rem; color: #a5b4fc;">
+                    Formato Esperado (JSON):<br>
+                    {<br>
+                    &nbsp;&nbsp;"items": [<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;{ "b": 1.0, "kappa": 1.0, "u": 0.5, "polymer_charge": 1, "polymer_charge_intensity": 1.5, "charges": [] },<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;{ "b": 1.5, "kappa": 0.5, "u": -0.8, "polymer_charge": 4, "polymer_charge_intensity": 0.8, "charges": [...] }<br>
+                    &nbsp;&nbsp;]<br>
+                    }
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app_v4.js"></script>
+</body>
+</html>

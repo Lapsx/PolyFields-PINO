@@ -1,0 +1,4 @@
+/home/lucas/Documents/PINN/PINO_Polymer_Webmap/pino_architecture.py:97: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  gridx = torch.tensor(torch.linspace(0, 1, size_x), dtype=torch.float)
+/home/lucas/Documents/PINN/PINO_Polymer_Webmap/pino_architecture.py:99: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  gridy = torch.tensor(torch.linspace(0, 1, size_y), dtype=torch.float)

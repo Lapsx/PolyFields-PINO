@@ -1,3 +1,20 @@
+# Model Weights and Tensors
 *.pt
 *.pth
 weights/
+
+# Datasets and Large Files
+data/
+*.zip
+
+# Python ignores
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment
+.env
+.venv
+env/
+venv/
