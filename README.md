@@ -15,7 +15,12 @@
    pip install -r requirements.txt
    ```
 
-2. **Inicie o WebApp (Ambiente Interativo):**
+2. **Baixe os Pesos do Modelo:**
+   O arquivo do modelo treinado está hospedado na aba de **Releases** deste repositório (lado direito da página no GitHub).
+   * Baixe o arquivo `pino_v3_phase5_physics.pth` do release `v1.0-alpha`.
+   * Salve-o dentro da pasta `weights/` na raiz do projeto (crie a pasta se não existir).
+
+3. **Inicie o WebApp (Ambiente Interativo):**
    Para explorar as predições de densidade polimérica em tempo real, utilize o script de inicialização automático:
    ```bash
    bash iniciar_webapp.sh
@@ -110,7 +115,12 @@ Abaixo estão os passos práticos detalhados na nossa "Pipeline PINO V3", a sere
    pip install -r requirements.txt
    ```
 
-2. **Launch the WebApp (Interactive Sandbox):**
+2. **Download the Model Weights:**
+   The trained `.pth` file is hosted in the **Releases** section of this repository (on the right sidebar of the GitHub page).
+   * Download `pino_v3_phase5_physics.pth` from the `v1.0-alpha` release.
+   * Place it inside the `weights/` folder at the root of the project (create the folder if it doesn't exist).
+
+3. **Launch the WebApp (Interactive Sandbox):**
    To explore polymer density predictions in real-time, use the automated startup script:
    ```bash
    bash iniciar_webapp.sh
