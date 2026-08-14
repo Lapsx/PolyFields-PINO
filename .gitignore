@@ -18,3 +18,7 @@ __pycache__/
 .venv
 env/
 venv/
+
+# Markdown Docs
+*.md
+!README.md
