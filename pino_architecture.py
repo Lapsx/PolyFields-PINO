@@ -105,26 +105,50 @@ class PINO_Polyelectrolyte(nn.Module):
         gridy = gridy.reshape(1, 1, size_y, 1).repeat([batchsize, size_x, 1, 1])
         return torch.cat((gridx, gridy), dim=-1).to(device)
 
-def sobolev_physics_loss(phi_pred, phi_true, v_tensor, model):
+def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, model):
     """
     Função de Loss central da V3 (PINO).
-    Incorpora o Sobolev Training (Suscetibilidade Linear) para garantir forma termodinâmica.
+    Incorpora Data Loss (MSE), Sobolev Training (Derivadas) e Physics Residuals (PDE).
     """
     # 1. Erro de Dados Supervisionado (L2 Loss)
     l2_loss = F.mse_loss(phi_pred, phi_true)
     
     # 2. Sobolev Loss (Erro nas Derivadas df/dV)
-    # Extrai o Jacobiano da Predição
     S_pred = torch.sum(phi_pred**2)
     dphi_dV_pred = torch.autograd.grad(S_pred, v_tensor, create_graph=True)[0]
-    
-    # Extrai o Jacobiano Numérico Real (ou carregado do dataset)
-    # Aqui assumiremos que o dataset de treino salvará o RPA_matrix (Jacobiano real)
-    # dphi_dV_true = ... 
-    
-    # sobolev = F.mse_loss(dphi_dV_pred, dphi_dV_true)
+    sobolev_loss = F.mse_loss(dphi_dV_pred, dphi_dV_true)
     
     # 3. Physics Residual Loss (Debye-Huckel / Edwards)
-    # diff_eq_residual = ...
+    b_val = params[:, 0].view(-1, 1, 1)
+    u_val = params[:, 2].view(-1, 1, 1)
+    c1_val = params[:, 3].view(-1, 1, 1)
+    c4_val = params[:, 4].view(-1, 1, 1)
     
-    return l2_loss # + 0.1 * sobolev + 0.5 * diff_eq_residual
+    phi_fft = torch.fft.fftn(phi_pred, dim=(1, 2))
+    N = phi_pred.shape[1]
+    kx = torch.fft.fftfreq(N).view(1, N, 1).to(phi_pred.device)
+    kz = torch.fft.fftfreq(N).view(1, 1, N).to(phi_pred.device)
+    k_sq = (kx**2 + kz**2)
+    
+    laplacian_fft = - (2 * torch.pi * k_sq) * phi_fft
+    laplacian_phi = torch.fft.ifftn(laplacian_fft, dim=(1, 2)).real
+    
+    V_fft = torch.fft.fftn(v_tensor, dim=(1, 2))
+    dV_dx = torch.fft.ifftn((1j * 2 * torch.pi * kx) * V_fft, dim=(1, 2)).real
+    dV_dz = torch.fft.ifftn((1j * 2 * torch.pi * kz) * V_fft, dim=(1, 2)).real
+    grad_V_sq = dV_dx**2 + dV_dz**2
+    
+    V_eff = v_tensor - (c1_val * 2.0 * torch.abs(v_tensor)) - (c4_val * 0.1 * grad_V_sq)
+    pde_residual = (b_val * 0.1) * laplacian_phi - (V_eff + u_val * phi_pred) * phi_pred
+    physics_loss = torch.mean(pde_residual**2)
+    
+    # Mass conservation and positivity
+    dx = 1.0 / N
+    mass = torch.sum(phi_pred, dim=(1, 2)) * (dx * dx)
+    loss_mass = torch.mean((mass - 1.0)**2)
+    loss_positivity = torch.mean(torch.relu(-phi_pred)**2)
+    
+    total_physics = physics_loss * 1.0 + loss_mass * 100.0 + loss_positivity * 50.0
+    
+    # Soma Ponderada (PINO Fundamental Equation)
+    return l2_loss + 0.1 * sobolev_loss + 0.05 * total_physics, l2_loss.item(), sobolev_loss.item(), total_physics.item()

@@ -179,12 +179,44 @@ def compute_density(charges: list[Charge], b_val: float, kappa_val: float, u_val
                 grad_sum = torch.sum(dphi_dV)
                 d2phi_dV2 = torch.autograd.grad(grad_sum, v_tensor)[0]
                 
-            density = phi.detach().cpu().numpy()
             
-            # --- FILTRO NEWTON-RAPHSON / CONSERVAÇÃO CANÔNICA ---
-            # Este filtro impõe analiticamente que a massa global do polímero seja 1.0.
-            # Matematicamente, multiplicar a densidade por um escalar Lambda é equivalente a 
-            # deslocar o Potencial Químico (mu) do sistema para satisfazer o Ensemble Canônico.
+            
+            
+            # --- FILTRO FÍSICO NEWTON-RAPHSON PÓS-PROCESSAMENTO ---
+            # Reconstrói V_eff em numpy para o passo da Física
+            V_fft = np.fft.fft2(V_clean)
+            kx_np = np.fft.fftfreq(N)
+            kz_np = np.fft.fftfreq(N)
+            KX, KZ = np.meshgrid(kx_np, kz_np, indexing='ij')
+            
+            dV_dx = np.real(np.fft.ifft2(1j * 2 * np.pi * KX * V_fft))
+            dV_dz = np.real(np.fft.ifft2(1j * 2 * np.pi * KZ * V_fft))
+            grad_V_sq = dV_dx**2 + dV_dz**2
+            
+            c1_val = polymer_charge_intensity if polymer_charge_type == 1 else 0.0
+            c4_val = polymer_charge_intensity if polymer_charge_type == 4 else 0.0
+            V_eff = V_clean - (c1_val * 2.0 * np.abs(V_clean)) - (c4_val * 0.1 * grad_V_sq)
+            
+            # Calcula Laplaciano da predição da rede
+            phi_fft = np.fft.fft2(density)
+            K_sq = KX**2 + KZ**2
+            laplacian_phi = np.real(np.fft.ifft2(- (2 * np.pi * K_sq) * phi_fft))
+            
+            # F(phi) = b * Laplacian(phi) - (V_eff + u * phi) * phi
+            R_pde = (b_val * 0.1) * laplacian_phi - (V_eff + u_val * density) * density
+            
+            # dF/dphi = - V_eff - 2 * u * phi (Jacobiano local aproximado)
+            dF_dphi = - V_eff - 2.0 * u_val * density
+            # Previne divisão por zero
+            dF_dphi[np.abs(dF_dphi) < 1e-6] = 1e-6 * np.sign(dF_dphi[np.abs(dF_dphi) < 1e-6] + 1e-12)
+            
+            # Newton Step com relaxação
+            delta_phi = - R_pde / dF_dphi
+            density = density + 0.1 * delta_phi
+            density = np.clip(density, 0, None)
+            
+            # --- CONSERVAÇÃO CANÔNICA ---
+            # Desloca o potencial químico do sistema para satisfazer a massa
             dx_local = 1.0 / 100.0
             current_mass = np.sum(density) * dx_local * dx_local
             if current_mass > 1e-6:
