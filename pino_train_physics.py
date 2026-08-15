@@ -29,9 +29,11 @@ def train_physics():
     else:
         print("[!] Aviso: Nenhum peso anterior encontrado, iniciando do zero.")
 
+    # Removido nn.DataParallel pois ele quebra o autograd (create_graph=True) do Sobolev Loss
+    # e causa "double free or corruption" no C++ engine do PyTorch.
     if torch.cuda.device_count() > 1:
-        print(f"[*] Acelerando com {torch.cuda.device_count()} GPUs (DataParallel)!")
-        model = nn.DataParallel(model)
+        print("[!] Aviso: Várias GPUs detectadas no Kaggle, mas o nn.DataParallel QUEBRA as derivadas de alta ordem.")
+        print("[*] Restringindo o treinamento para a GPU principal (cuda:0) para preservar o Grafo Matemático!")
 
     print("[*] Carregando dataset completo (Ground Truth + Derivadas)...")
     dataset_path = "data/pino_v3_dataset_complete.pt"
@@ -47,10 +49,8 @@ def train_physics():
     
     dataset = torch.utils.data.TensorDataset(V_data, params_data, phi_scft_data, dphi_dV_data)
     
-    base_batch_size = 8
-    num_gpus = max(1, torch.cuda.device_count())
-    effective_batch_size = base_batch_size * num_gpus
-    print(f"[*] Tamanho do batch efetivo: {effective_batch_size}")
+    effective_batch_size = 8
+    print(f"[*] Tamanho do batch efetivo (Fixado em 1 GPU): {effective_batch_size}")
     loader = torch.utils.data.DataLoader(dataset, batch_size=effective_batch_size, shuffle=True)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
