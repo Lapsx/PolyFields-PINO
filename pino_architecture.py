@@ -96,14 +96,14 @@ class PINO_Polyelectrolyte(nn.Module):
         x = F.gelu(x)
         x = self.q2(x)
         
-        # [Correção PINO Baseada em Feedback Biocientífico]: 
-        # Remoção da Softplus. Ela criava um background positivo infinito que destruía
-        # zonas de depleção absoluta (onde cargas/obstáculos forçam phi = 0 estrito).
-        x = F.relu(x) # Permite 0 estrito
-        
-        # Normalização alinhada EXATAMENTE ao scft_solver.py (* 100.0)
-        masses = torch.sum(x, dim=(1, 2), keepdim=True) + 1e-8
-        x = (x / masses) * 100.0
+        # [Correção PINO Definitiva]: Substituição da ReLU por Softmax Espacial.
+        # A ReLU causava o problema de "Dying Gradient" (se a matriz inteira iniciasse negativa, 
+        # a derivada morria permanentemente em 0.0000). A Softmax espelha a mecânica 
+        # estatística da Distribuição de Boltzmann e garante derivadas C-infinito.
+        B, Nx, Ny, C = x.shape
+        x_flat = x.view(B, Nx * Ny)
+        x_soft = F.softmax(x_flat, dim=-1)
+        x = x_soft.view(B, Nx, Ny, C) * 100.0
         return x
         
     def get_grid(self, shape, device):
