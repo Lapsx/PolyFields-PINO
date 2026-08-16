@@ -95,6 +95,15 @@ class PINO_Polyelectrolyte(nn.Module):
         x = self.q(x)
         x = F.gelu(x)
         x = self.q2(x)
+        
+        # [Correção PINO Baseada em Feedback Biocientífico]: 
+        # Remoção da Softplus. Ela criava um background positivo infinito que destruía
+        # zonas de depleção absoluta (onde cargas/obstáculos forçam phi = 0 estrito).
+        x = F.relu(x) # Permite 0 estrito
+        
+        # Normalização alinhada EXATAMENTE ao scft_solver.py (* 100.0)
+        masses = torch.sum(x, dim=(1, 2), keepdim=True) + 1e-8
+        x = (x / masses) * 100.0
         return x
         
     def get_grid(self, shape, device):
@@ -114,6 +123,7 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, mod
     l2_loss = F.mse_loss(phi_pred, phi_true)
     
     # 2. Sobolev Loss (Erro nas Derivadas df/dV)
+    # Alinhamento obrigatório com o dataset (scft_solver.py usou phi^2 para extrair a matriz Jacobiana não nula)
     S_pred = torch.sum(phi_pred**2)
     dphi_dV_pred = torch.autograd.grad(S_pred, v_tensor, create_graph=True)[0]
     sobolev_loss = F.mse_loss(dphi_dV_pred, dphi_dV_true)
@@ -142,13 +152,9 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, mod
     pde_residual = (b_val * 0.1) * laplacian_phi - (V_eff + u_val * phi_pred) * phi_pred
     physics_loss = torch.mean(pde_residual**2)
     
-    # Mass conservation and positivity
-    dx = 1.0 / N
-    mass = torch.sum(phi_pred, dim=(1, 2)) * (dx * dx)
-    loss_mass = torch.mean((mass - 1.0)**2)
-    loss_positivity = torch.mean(torch.relu(-phi_pred)**2)
-    
-    total_physics = physics_loss * 1.0 + loss_mass * 100.0 + loss_positivity * 50.0
+    # Conservação de Massa e Positividade foram migrados para Hard Constraints no Forward.
+    # O modelo não sofrerá mais colapso para a média trivial.
+    total_physics = physics_loss * 1.0
     
     # Soma Ponderada (PINO Fundamental Equation)
     return l2_loss + 0.1 * sobolev_loss + 0.05 * total_physics, l2_loss.item(), sobolev_loss.item(), total_physics.item()
