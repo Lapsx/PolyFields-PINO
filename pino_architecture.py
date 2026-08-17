@@ -104,7 +104,7 @@ class PINO_Polyelectrolyte(nn.Module):
         x_flat = x.view(B, Nx * Ny)
         x_soft = F.softmax(x_flat, dim=-1)
         x = x_soft.view(B, Nx, Ny, C) * 100.0
-        return x
+        return x.squeeze(-1) # Previne broadcasting de [B, Nx, Ny, 1] com [B, Nx, Ny] no autograd
         
     def get_grid(self, shape, device):
         batchsize, size_x, size_y = shape[0], shape[1], shape[2]
@@ -120,13 +120,14 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, mod
     Incorpora Data Loss (MSE), Sobolev Training (Derivadas) e Physics Residuals (PDE).
     """
     # 1. Erro de Dados Supervisionado (L2 Loss)
-    l2_loss = F.mse_loss(phi_pred, phi_true)
+    # A variância do dataset é ~7e-5. Multiplicamos por 10000 para tirar o Otimizador da morte subnumérica.
+    scale_factor = 10000.0
+    l2_loss = F.mse_loss(phi_pred, phi_true) * scale_factor
     
     # 2. Sobolev Loss (Erro nas Derivadas df/dV)
-    # Alinhamento obrigatório com o dataset (scft_solver.py usou phi^2 para extrair a matriz Jacobiana não nula)
     S_pred = torch.sum(phi_pred**2)
     dphi_dV_pred = torch.autograd.grad(S_pred, v_tensor, create_graph=True)[0]
-    sobolev_loss = F.mse_loss(dphi_dV_pred, dphi_dV_true)
+    sobolev_loss = F.mse_loss(dphi_dV_pred, dphi_dV_true) * scale_factor
     
     # 3. Physics Residual Loss (Debye-Huckel / Edwards)
     b_val = params[:, 0].view(-1, 1, 1)
@@ -150,10 +151,8 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, mod
     
     V_eff = v_tensor - (c1_val * 2.0 * torch.abs(v_tensor)) - (c4_val * 0.1 * grad_V_sq)
     pde_residual = (b_val * 0.1) * laplacian_phi - (V_eff + u_val * phi_pred) * phi_pred
-    physics_loss = torch.mean(pde_residual**2)
+    physics_loss = torch.mean(pde_residual**2) * scale_factor
     
-    # Conservação de Massa e Positividade foram migrados para Hard Constraints no Forward.
-    # O modelo não sofrerá mais colapso para a média trivial.
     total_physics = physics_loss * 1.0
     
     # Soma Ponderada (PINO Fundamental Equation)
