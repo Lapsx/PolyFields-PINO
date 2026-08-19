@@ -156,4 +156,8 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true, params, mod
     total_physics = physics_loss * 1.0
     
     # Soma Ponderada (PINO Fundamental Equation)
-    return l2_loss + 0.1 * sobolev_loss + 0.05 * total_physics, l2_loss.item(), sobolev_loss.item(), total_physics.item()
+    # [Fase 5 - Physics Only]: Cortamos o cordão umbilical com os dados Mock do scft_solver.
+    # O modelo agora navega no espaço latente guiado estritamente pelas leis da termodinâmica.
+    loss_final = 0.0 * l2_loss + 0.0 * sobolev_loss + 1.0 * total_physics
+    
+    return loss_final, l2_loss.item(), sobolev_loss.item(), total_physics.item()
