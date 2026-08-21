@@ -41,7 +41,7 @@ def train_physics():
          print(f"[!] Erro: {dataset_path} não encontrado. Execute scft_solver.py primeiro.")
          return
          
-    data = torch.load(dataset_path)
+    data = torch.load(dataset_path, weights_only=False)
     V_data = data["V"]
     params_data = data["params"]
     phi_scft_data = data["phi_scft"]
@@ -79,7 +79,7 @@ def train_physics():
             N = V_batch.shape[1]
             B = V_batch.shape[0]
             
-            # [V, c1, c2, b, kappa, u]
+            # [V, c1, c2(zero), b, c4, u] — kappa está implícito em V (Yukawa)
             inputs = torch.zeros(B, N, N, 6, device=device)
             inputs[..., 0] = V_batch
             inputs[..., 1] = p_batch[:, 3].view(B, 1, 1).expand(B, N, N)
@@ -91,7 +91,7 @@ def train_physics():
             phi_pred = model(inputs).squeeze(-1)
             
             loss, l2_item, sob_item, phys_item = sobolev_physics_loss(
-                phi_pred, phi_batch, V_batch, dphi_batch, p_batch, model
+                phi_pred, phi_batch, V_batch, dphi_batch, p_batch, model, epoch=ep
             )
             
             loss.backward()
