@@ -66,7 +66,22 @@ def train_physics():
     params_data = data["params"]
     phi_scft_data = data["phi_scft"]
     dphi_dV_data = data["dphi_dV"]
-    
+
+    # Descarta amostras colapsadas: quando o poço efetivo é muito profundo e a
+    # repulsão (u) é fraca, o estado fundamental localiza abaixo da resolução da
+    # grade e vira um delta de Dirac num pixel. É artefato de rede, não física, e
+    # a rede não tem como reproduzir sem aprender ruído.
+    massa = phi_scft_data.sum(dim=(1, 2))
+    frac_pico = phi_scft_data.amax(dim=(1, 2)) / (massa + 1e-12)
+    ok = frac_pico <= 0.5
+    n_drop = int((~ok).sum())
+    if n_drop:
+        print(f"[!] Descartando {n_drop}/{len(ok)} amostras colapsadas "
+              f"(>50% da massa num pixel).")
+        V_data, params_data = V_data[ok], params_data[ok]
+        phi_scft_data, dphi_dV_data = phi_scft_data[ok], dphi_dV_data[ok]
+
+    print(f"[*] Treinando com {len(V_data)} amostras | params: {params_data.shape[1]} colunas")
     dataset = torch.utils.data.TensorDataset(V_data, params_data, phi_scft_data, dphi_dV_data)
     
     effective_batch_size = 32
@@ -86,14 +101,22 @@ def train_physics():
     model.train()
     os.makedirs("weights", exist_ok=True)
 
-    def save_all(ep_done):
+    def save_all(ep_done, numerado=False):
+        """Salva os dois arquivos rolantes; só arquiva um checkpoint numerado quando
+        pedido.
+
+        O salvamento por tempo dispara a cada ~10 épocas, então numerar todo save
+        encheria /kaggle/working com ~40 arquivos de 151 MB por sessão (≈6 GB) sem
+        utilidade — os rolantes já bastam para retomar. Numerado só no múltiplo de 100.
+        """
         state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
         torch.save(state, BACKEND_WEIGHTS)                       # formato lido pelo backend
-        torch.save(state, f"weights/pino_v3_phase5_physics_ep{ep_done}.pth")
         torch.save({"model": state,
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
                     "epoch": ep_done}, TRAIN_STATE)
+        if numerado:
+            torch.save(state, f"weights/pino_v3_phase5_physics_ep{ep_done}.pth")
 
     last_save = time.time()
     for ep in range(start_epoch, epochs):
@@ -144,12 +167,13 @@ def train_physics():
         if (ep+1) % 10 == 0:
             print(f"Ep [{ep+1}/{epochs}] | Total: {ep_total/n_b:.4f} | L2: {ep_l2/n_b:.4f} | PDE: {ep_sob/n_b:.4f} | Phys: {ep_phys/n_b:.4f} | LR: {scheduler.get_last_lr()[0]:.2e}")
         
-        if (ep + 1) % 100 == 0 or (time.time() - last_save) > SAVE_EVERY_MIN * 60:
-            save_all(ep + 1)
+        marco = (ep + 1) % 100 == 0
+        if marco or (time.time() - last_save) > SAVE_EVERY_MIN * 60:
+            save_all(ep + 1, numerado=marco)
             last_save = time.time()
             print(f"[+] Checkpoint salvo na época {ep+1}!")
 
-    save_all(epochs)
+    save_all(epochs, numerado=True)
     print("[+] Treino Unificado Concluído! Pesos salvos.")
 
 if __name__ == "__main__":
