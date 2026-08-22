@@ -13,8 +13,9 @@ import matplotlib.pyplot as plt
 # 1. Ajuste de Paths para importar a FNO Paramétrica
 # ==========================================
 current_dir = os.path.dirname(os.path.abspath(__file__))
-fno_core_path = os.path.join(current_dir, "model_core")
-sys.path.append(fno_core_path)
+root_dir = os.path.dirname(current_dir)
+# Fonte única de verdade: pino_architecture.py na raiz do projeto
+sys.path.insert(0, root_dir)
 
 try:
     from pino_architecture import PINO_Polyelectrolyte
@@ -51,8 +52,6 @@ R = np.sqrt(X**2 + Z**2)
 
 # Carregando o Cérebro Neural Paramétrico
 model = PINO_Polyelectrolyte(modes1=16, modes2=16, width=96, input_channels=8).to(device)
-
-root_dir = os.path.dirname(current_dir)
 
 try:
     if os.path.exists(os.path.join(root_dir, "weights/pino_v3_phase5_physics.pth")):
@@ -169,7 +168,7 @@ def compute_density(charges: list[Charge], b_val: float, kappa_val: float, u_val
             
             with torch.set_grad_enabled(True):
                 out = model(inputs)
-                phi = out[0, :, :, 0]
+                phi = out[0]  # output shape (B, Nx, Ny) após squeeze(-1)
                 
                 # Objetivo S = int(phi^2) - mede localizacao do polimero
                 S = torch.sum(phi**2)
@@ -178,10 +177,8 @@ def compute_density(charges: list[Charge], b_val: float, kappa_val: float, u_val
                 
                 grad_sum = torch.sum(dphi_dV)
                 d2phi_dV2 = torch.autograd.grad(grad_sum, v_tensor)[0]
-                
             
-            
-            
+            density = phi.detach().cpu().numpy()
             # --- FILTRO FÍSICO NEWTON-RAPHSON PÓS-PROCESSAMENTO ---
             # Reconstrói V_eff em numpy para o passo da Física
             V_fft = np.fft.fft2(V_clean)
@@ -200,10 +197,10 @@ def compute_density(charges: list[Charge], b_val: float, kappa_val: float, u_val
             # Calcula Laplaciano da predição da rede
             phi_fft = np.fft.fft2(density)
             K_sq = KX**2 + KZ**2
-            laplacian_phi = np.real(np.fft.ifft2(- (2 * np.pi * K_sq) * phi_fft))
+            laplacian_phi = np.real(np.fft.ifft2(-(4.0 * np.pi**2 * K_sq) * phi_fft))
             
-            # F(phi) = b * Laplacian(phi) - (V_eff + u * phi) * phi
-            R_pde = (b_val * 0.1) * laplacian_phi - (V_eff + u_val * density) * density
+            # F(phi) = (b²/6)·Laplacian(phi) - (V_eff + u·phi)·phi  [Edwards ground state]
+            R_pde = (b_val**2 / 6.0) * laplacian_phi - (V_eff + u_val * density) * density
             
             # dF/dphi = - V_eff - 2 * u * phi (Jacobiano local aproximado)
             dF_dphi = - V_eff - 2.0 * u_val * density

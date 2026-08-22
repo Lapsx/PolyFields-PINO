@@ -2,6 +2,14 @@ import torch
 import torch.nn as nn
 from pino_architecture import PINO_Polyelectrolyte, sobolev_physics_loss
 import os
+import time
+
+# Kaggle mata o kernel em 12h. Salva por tempo (além de por época) para nunca
+# perder mais que SAVE_EVERY_MIN de treino.
+SAVE_EVERY_MIN = 20.0
+TRAIN_STATE = "weights/training_state.pth"   # model + optimizer + época (NÃO usado pelo backend)
+BACKEND_WEIGHTS = "weights/pino_v3_phase5_physics.pth"  # state_dict puro (lido por backend/main.py)
+
 
 def train_physics():
     print("[*] Iniciando Unified PINO Training (Data L2 + Sobolev + Physics Collocation)...")
@@ -20,9 +28,20 @@ def train_physics():
             clean_state_dict[k_clean] = v
         m.load_state_dict(clean_state_dict)
 
-    if os.path.exists("weights/pino_v3_phase5_physics.pth"):
-        load_clean_state_dict(model, "weights/pino_v3_phase5_physics.pth", device)
+    # start_epoch preserva o schedule de LR e o warm-up da física entre sessões
+    # do Kaggle. Sem isso, cada sessão de 12h recomeça em alpha_phys=0 e LR=1e-4.
+    start_epoch = 0
+    resume_state = None
+    if os.path.exists(TRAIN_STATE):
+        resume_state = torch.load(TRAIN_STATE, map_location=device, weights_only=False)
+        model.load_state_dict(resume_state["model"])
+        start_epoch = resume_state["epoch"]
+        print(f"[+] Estado de treino encontrado! Retomando da época {start_epoch} "
+              f"(LR e warm-up da física preservados).")
+    elif os.path.exists(BACKEND_WEIGHTS):
+        load_clean_state_dict(model, BACKEND_WEIGHTS, device)
         print("[+] Pesos anteriores encontrados! Retomando o treino de onde parou...")
+        print("[!] Sem training_state.pth: contador de época reinicia em 0.")
     elif os.path.exists("weights/pino_v3_phase4_final.pth"):
         load_clean_state_dict(model, "weights/pino_v3_phase4_final.pth", device)
         print("[+] Pesos carregados para iniciar o treino!")
@@ -56,10 +75,27 @@ def train_physics():
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     epochs = 5000
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.5)
-    
+
+    if resume_state is not None:
+        optimizer.load_state_dict(resume_state["optimizer"])
+        scheduler.load_state_dict(resume_state["scheduler"])
+        print(f"[+] Momentos do Adam e scheduler restaurados (LR atual: "
+              f"{scheduler.get_last_lr()[0]:.2e}).")
+
     model.train()
     os.makedirs("weights", exist_ok=True)
-    for ep in range(epochs):
+
+    def save_all(ep_done):
+        state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+        torch.save(state, BACKEND_WEIGHTS)                       # formato lido pelo backend
+        torch.save(state, f"weights/pino_v3_phase5_physics_ep{ep_done}.pth")
+        torch.save({"model": state,
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "epoch": ep_done}, TRAIN_STATE)
+
+    last_save = time.time()
+    for ep in range(start_epoch, epochs):
         ep_l2 = 0.0
         ep_sob = 0.0
         ep_phys = 0.0
@@ -107,12 +143,12 @@ def train_physics():
         if (ep+1) % 10 == 0:
             print(f"Ep [{ep+1}/{epochs}] | Total: {ep_total/n_b:.4f} | L2: {ep_l2/n_b:.4f} | PDE: {ep_sob/n_b:.4f} | Phys: {ep_phys/n_b:.4f} | LR: {scheduler.get_last_lr()[0]:.2e}")
         
-        if (ep + 1) % 100 == 0:
-            state_to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-            torch.save(state_to_save, f"weights/pino_v3_phase5_physics_ep{ep+1}.pth")
-            torch.save(state_to_save, "weights/pino_v3_phase5_physics.pth")
+        if (ep + 1) % 100 == 0 or (time.time() - last_save) > SAVE_EVERY_MIN * 60:
+            save_all(ep + 1)
+            last_save = time.time()
             print(f"[+] Checkpoint salvo na época {ep+1}!")
 
+    save_all(epochs)
     print("[+] Treino Unificado Concluído! Pesos salvos.")
 
 if __name__ == "__main__":
