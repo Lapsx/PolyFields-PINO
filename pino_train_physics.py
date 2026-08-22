@@ -105,7 +105,7 @@ def train_physics():
         scheduler.step()
         n_b = len(loader)
         if (ep+1) % 10 == 0:
-            print(f"Ep [{ep+1}/{epochs}] | Total: {ep_total/n_b:.4f} | L2: {ep_l2/n_b:.4f} | Sob: {ep_sob/n_b:.4f} | Phys: {ep_phys/n_b:.4f} | LR: {scheduler.get_last_lr()[0]:.2e}")
+            print(f"Ep [{ep+1}/{epochs}] | Total: {ep_total/n_b:.4f} | L2: {ep_l2/n_b:.4f} | PDE: {ep_sob/n_b:.4f} | Phys: {ep_phys/n_b:.4f} | LR: {scheduler.get_last_lr()[0]:.2e}")
         
         if (ep + 1) % 100 == 0:
             state_to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()

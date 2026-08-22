@@ -188,43 +188,40 @@ def _edwards_residual(phi, v_eff, u_val, b_val, k_sq_4pi2):
 def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true,
                           params, model, epoch=0):
     """
-    Perda PINO composta para dados com Ground Truth SCFT (Fases 1–5).
+    Perda PINO: L2 relativo + PDE de Edwards + Conservação de massa.
 
     Componentes:
-      1. L2 supervisionado (MSE em φ)
-      2. Sobolev H¹: ||∇(φ_pred − φ_true)||²_L2 via Parseval
-         Penaliza erros nos gradientes espaciais de φ (captura δφ/δV implicitamente).
-      3. PDE de Edwards: (b²/6)∇²φ = (V_eff + u·φ)·φ — mascarada nas paredes
-         Penaliza violação das leis de mecânica estatística.
-      4. Conservação de massa (suave): (∑φ_pred − 100)² / N²
-         Reforça ∫φ dr = 100 durante o treino (complementa o filtro Newton-Raphson
-         do backend e o dataset do SCFT que já normaliza a massa).
+      1. L2 relativo: ||φ_pred − φ_true||² / ||φ_true||²
+         Erro normalizado pela magnitude do campo — evita viés por escala.
+      2. PDE de Edwards: (b²/6)∇²φ − (V_eff + u·φ)·φ — mascarada nas paredes
+         Normalizada por ||φ||² no domínio para manter escala O(1).
+      3. Conservação de massa: (mean(φ_pred) − mean(φ_true))²
+         Penaliza desvio na massa total.
 
-    Schedule (adequado para iniciar a partir dos pesos pré-treinados da Fase 4):
-      Épocas    0–200 : warm-up  — só L2 + Sobolev  (alpha_phys = 0)
-      Épocas  200–1000: ramp-up  — física entra linearmente (alpha_phys: 0 → 1)
-      Épocas  1000+   : treino completo              (alpha_phys = 1)
+    Schedule:
+      Épocas    0–100 : warm-up  — só L2                    (alpha_phys = 0)
+      Épocas  100–500 : ramp-up  — física entra linearmente (alpha_phys: 0 → 1)
+      Épocas  500+    : treino completo                     (alpha_phys = 1)
 
-    dphi_dV_true: campo proxy (≈ −2φ) — mantido na assinatura por compatibilidade
-                  com o DataLoader existente. NÃO é usado na loss.
+    Pesos: L2 = 1.0, PDE = 0.1, Massa = 0.05
+
+    dphi_dV_true: mantido na assinatura por compatibilidade com o DataLoader.
+                  NÃO é usado na loss.
 
     Returns:
-        (loss_total, l2_item, sobolev_item, physics_item)
+        (loss_total, l2_item, pde_item, physics_item)
     """
-    scale = 10_000.0   # N² = 100² — tira o otimizador da morte sub-numérica
     N   = phi_pred.shape[1]
     dev = phi_pred.device
 
     kx, kz, k_sq_4pi2 = _spectral_ops(N, dev)
 
-    # ── 1. L2 supervisionado ─────────────────────────────────────────────
-    l2_loss = F.mse_loss(phi_pred, phi_true) * scale
+    # ── 1. L2 relativo ──────────────────────────────────────────────────
+    diff_sq = torch.mean((phi_pred - phi_true) ** 2, dim=(1, 2))
+    true_sq = torch.mean(phi_true ** 2, dim=(1, 2)) + 1e-8
+    l2_loss = torch.mean(diff_sq / true_sq)
 
-    # ── 2. Sobolev H¹ — ||∇(φ_pred − φ_true)||² via Parseval ────────────
-    err_fft      = torch.fft.fftn(phi_pred - phi_true, dim=(1, 2))
-    sobolev_loss = torch.mean(k_sq_4pi2 * torch.abs(err_fft)**2) * scale
-
-    # ── 3. PDE de Edwards mascarada nas paredes ──────────────────────────
+    # ── 2. PDE de Edwards mascarada nas paredes ─────────────────────────
     b_val  = params[:, 0].view(-1, 1, 1)
     u_val  = params[:, 2].view(-1, 1, 1)
     c1_val = params[:, 3].view(-1, 1, 1)
@@ -233,23 +230,27 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true,
     v_eff   = _compute_v_eff(v_tensor, c1_val, c4_val, kx, kz)
     pde_res = _edwards_residual(phi_pred, v_eff, u_val, b_val, k_sq_4pi2)
 
-    # Condições de contorno de Dirichlet: φ = 0 nas paredes (V ≥ 9.0).
-    # A PDE não é válida nesses pixels — mascarar evita resíduos espúrios.
+    # Mascarar paredes (Dirichlet: φ = 0 onde V ≥ 9.0)
     domain = (v_tensor < 9.0).float()
     pde_res = pde_res * domain
 
-    # ── 4. Conservação de massa (suave) ─────────────────────────────────
-    mass_pred = phi_pred.sum(dim=(1, 2))                              # (B,)
-    mass_loss = (F.mse_loss(mass_pred, torch.full_like(mass_pred, 100.0))
-                 / (N ** 2) * scale)
+    # Normalizar resíduo pela magnitude do campo no domínio
+    phi_sq_domain = torch.mean((phi_pred * domain) ** 2, dim=(1, 2)) + 1e-8
+    pde_sq = torch.mean(pde_res ** 2, dim=(1, 2))
+    pde_loss = torch.mean(pde_sq / phi_sq_domain)
 
-    physics_loss = torch.mean(pde_res ** 2) * scale + 0.1 * mass_loss
+    # ── 3. Conservação de massa ─────────────────────────────────────────
+    mass_pred = torch.mean(phi_pred, dim=(1, 2))
+    mass_true = torch.mean(phi_true, dim=(1, 2))
+    mass_loss = torch.mean((mass_pred - mass_true) ** 2)
+
+    physics_loss = pde_loss + 0.5 * mass_loss
 
     # ── Schedule ────────────────────────────────────────────────────────
-    alpha_phys = min(1.0, max(0.0, (epoch - 200) / 800.0))
-    loss_total = 1.0 * l2_loss + 0.1 * sobolev_loss + alpha_phys * physics_loss
+    alpha_phys = min(1.0, max(0.0, (epoch - 100) / 400.0))
+    loss_total = l2_loss + 0.1 * alpha_phys * physics_loss
 
-    return loss_total, l2_loss.item(), sobolev_loss.item(), physics_loss.item()
+    return loss_total, l2_loss.item(), pde_loss.item(), physics_loss.item()
 
 
 # ===========================================================================
