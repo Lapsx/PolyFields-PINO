@@ -2,8 +2,13 @@ import torch
 import os
 import matplotlib.pyplot as plt
 
+# Fonte única de verdade: a mesma V_eff e a mesma reconstrução de amplitude usadas
+# pela loss e pelo backend. Se o solver usasse fórmula própria, o ground truth e a
+# física penalizada no treino descreveriam problemas diferentes.
+from pino_architecture import _spectral_ops, _compute_v_eff, apply_amplitude, unpack_params
 
-def solve_scft_batch(V_fields, params, N_iter=3000, dt=0.005, target_mass=100.0,
+
+def solve_scft_batch(V_fields, params, N_iter=10000, dt=0.005, target_mass=100.0,
                      mixing=0.5, tol=1e-7, batch_size=64, device='cpu'):
     """
     Solver SCFT batched via Imaginary Time Propagation no regime Ground State Dominance.
@@ -11,8 +16,16 @@ def solve_scft_batch(V_fields, params, N_iter=3000, dt=0.005, target_mass=100.0,
     Resolve o estado fundamental de:
         H ψ = μ ψ,   com   H = -(b²/6)∇² + ω(r)
 
-    onde o campo auto-consistente é ω(r) = V_ext(r) + u · φ(r)
+    onde o campo auto-consistente é ω(r) = V_eff(r) + u · φ(r), com
+
+        V_fis = A · V_norm                                   (paredes preservadas)
+        V_eff = V_fis − c1·2|V_fis| − c4·0.1·|∇V_fis|²
+
     e a densidade polimérica é φ(r) = ψ²(r) · (target_mass / ∫ψ² dr).
+
+    A dependência em c1/c4 (tipo de polímero) e em A (amplitude) entra AQUI, no
+    ground truth. Sem isso o dataset não tem informação sobre esses parâmetros e a
+    rede não pode aprender a responder a eles, por mais que sejam canais de entrada.
 
     Método: Strang splitting do propagador exp(-Δτ H):
         exp(-Δτ/2 ω) · exp(-Δτ T) · exp(-Δτ/2 ω)
@@ -21,8 +34,9 @@ def solve_scft_batch(V_fields, params, N_iter=3000, dt=0.005, target_mass=100.0,
     no espaço real. Mixing linear estabiliza a auto-consistência.
 
     Args:
-        V_fields:    (N_samples, Nx, Ny)  potenciais externos (GRF + paredes V>9).
-        params:      (N_samples, 3)       [b, kappa, u]. kappa está implícito em V.
+        V_fields:    (N_samples, Nx, Ny)  potenciais NORMALIZADOS (GRF + paredes V>9).
+        params:      (N_samples, 3|5|6)   [b, kappa, u] (+ c1, c4) (+ A).
+                     kappa está implícito em V. Formatos curtos assumem c1=c4=0, A=1.
         N_iter:      Iterações máximas do propagador imaginário.
         dt:          Passo de tempo imaginário Δτ.
         target_mass: ∫φ dr (conservação canônica).
@@ -53,11 +67,18 @@ def solve_scft_batch(V_fields, params, N_iter=3000, dt=0.005, target_mass=100.0,
         e = min(s + batch_size, N_samples)
         B = e - s
 
-        V = V_fields[s:e].to(device)                     # (B, Nx, Ny)
-        b_val = params[s:e, 0].to(device).view(B, 1, 1)  # Kuhn length
-        u_val = params[s:e, 2].to(device).view(B, 1, 1)  # Flory-Huggins
+        V_norm = V_fields[s:e].to(device)                # (B, Nx, Ny) normalizado
+        b_val, u_val, c1_val, c4_val, a_val = unpack_params(params[s:e], device=device)
 
-        wall_mask = (V > 9.0)
+        # A máscara vem do campo NORMALIZADO: 10.0 é o sentinela de parede e não
+        # deve ser reescalado pela amplitude.
+        wall_mask = (V_norm > 9.0)
+
+        # Potencial efetivo: amplitude física + perturbação pelo tipo de polímero
+        V_phys = apply_amplitude(V_norm, a_val)
+        kx, kz, _ = _spectral_ops(Nx, V_phys.device)
+        V = _compute_v_eff(V_phys, c1_val, c4_val, kx, kz)
+        V = torch.where(wall_mask, V_norm, V)            # paredes de volta ao sentinela
 
         # ─── Propagador cinético: exp(-Δτ · (b²/6) · 4π²k²) ───
         # Pré-computado por batch pois b varia por amostra
@@ -131,7 +152,9 @@ def solve_scft_batch(V_fields, params, N_iter=3000, dt=0.005, target_mass=100.0,
     return phi_all
 
 
-def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt"):
+def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt",
+                    out_path="data/pino_v3_dataset_complete.pt",
+                    overwrite=False):
     """
     Solucionador SCFT real: recebe os potenciais GRF e resolve a densidade polimérica
     via Imaginary Time Propagation no regime de Ground State Dominance.
@@ -156,6 +179,13 @@ def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt"):
         print(f"[!] Erro: {dataset_path} não encontrado. Execute grf_generator.py primeiro.")
         return
 
+    # Guarda contra sobrescrever um dataset existente sem intenção explícita:
+    # gerar leva ~1h de GPU e o caminho de saída era fixo.
+    if os.path.exists(out_path) and not overwrite:
+        print(f"[!] {out_path} já existe ({os.path.getsize(out_path)/1e6:.0f} MB).")
+        print("[!] Passe overwrite=True para substituí-lo, ou out_path= para gravar em outro lugar.")
+        return
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"[*] Device: {device}")
 
@@ -167,11 +197,20 @@ def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt"):
 
     print(f"[*] Resolvendo {num_samples} cenários SCFT (grid {grid_size}x{grid_size})...")
     print(f"[*] Parâmetros: b ∈ [{params[:, 0].min():.2f}, {params[:, 0].max():.2f}], "
-          f"u ∈ [{params[:, 2].min():.2f}, {params[:, 2].max():.2f}]")
+          f"u ∈ [{params[:, 2].min():.2f}, {params[:, 2].max():.2f}]"
+          + (f", A ∈ [{params[:, 5].min():.2f}, {params[:, 5].max():.2f}]"
+             if params.shape[1] >= 6 else ""))
+    if params.shape[1] >= 5:
+        print(f"[*] Carga: {(params[:, 3] > 0).sum().item()} Diblock (c1), "
+              f"{(params[:, 4] > 0).sum().item()} Alternado (c4), "
+              f"{((params[:, 3] == 0) & (params[:, 4] == 0)).sum().item()} neutro")
 
+    # N_iter=10000: com 800 o ITP parava no teto de iterações, não na tolerância
+    # (δ_max ficava em 5e-2 a 1.6e-1), e o φ resultante ficava ~38% longe do ponto
+    # fixo. Medido: 10000 vs 30000 difere só 0.003% na mediana.
     phi_scft = solve_scft_batch(
         V_fields, params,
-        N_iter=800,
+        N_iter=10000,
         dt=0.005,
         target_mass=100.0,
         mixing=0.5,
@@ -187,7 +226,6 @@ def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt"):
     dphi_dV = -2.0 * phi_scft * (V_fields < 9.0).float()
 
     # ─── Salvar dataset ───
-    out_path = "data/pino_v3_dataset_complete.pt"
     torch.save({
         "V": V_fields.detach(),
         "params": params,
@@ -246,9 +284,10 @@ def run_scft_solver(dataset_path="data/pino_v3_grf_dataset.pt"):
     axes[1, 2].legend()
 
     plt.tight_layout()
-    plt.savefig("data/exemplo_scft_solution.png", dpi=150)
+    fig_path = os.path.join(os.path.dirname(out_path) or ".", "exemplo_scft_solution.png")
+    plt.savefig(fig_path, dpi=150)
     plt.close()
-    print("[+] Imagem comparativa salva em data/exemplo_scft_solution.png")
+    print(f"[+] Imagem comparativa salva em {fig_path}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from pino_architecture import PINO_Polyelectrolyte, sobolev_physics_loss
+from pino_architecture import (PINO_Polyelectrolyte, sobolev_physics_loss,
+                               unpack_params, amplitude_to_channel)
 import os
 import time
 
@@ -68,11 +69,11 @@ def train_physics():
     
     dataset = torch.utils.data.TensorDataset(V_data, params_data, phi_scft_data, dphi_dV_data)
     
-    effective_batch_size = 8
+    effective_batch_size = 32
     print(f"[*] Tamanho do batch efetivo (Fixado em 1 GPU): {effective_batch_size}")
     loader = torch.utils.data.DataLoader(dataset, batch_size=effective_batch_size, shuffle=True)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
     epochs = 5000
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.5)
 
@@ -107,21 +108,21 @@ def train_physics():
             phi_batch = phi_batch.to(device)
             dphi_batch = dphi_batch.to(device)
             
-            # Se o dataset só tem 3 parâmetros (b, kappa, u), preenche c1 e c4 com zeros
-            if p_batch.shape[1] == 3:
-                zeros_pad = torch.zeros(p_batch.shape[0], 2, device=device)
-                p_batch = torch.cat([p_batch, zeros_pad], dim=1)
-                
             N = V_batch.shape[1]
             B = V_batch.shape[0]
-            
-            # [V, c1, c2(zero), b, c4, u] — kappa está implícito em V (Yukawa)
+
+            # unpack_params aceita 3, 5 ou 6 colunas (datasets antigos incluídos)
+            b_v, u_v, c1_v, c4_v, a_v = unpack_params(p_batch, device=device)
+            exp = lambda t: t.expand(B, N, N)
+
+            # [V, c1, A, b, c4, u] — kappa está implícito em V (Yukawa)
             inputs = torch.zeros(B, N, N, 6, device=device)
             inputs[..., 0] = V_batch
-            inputs[..., 1] = p_batch[:, 3].view(B, 1, 1).expand(B, N, N)
-            inputs[..., 3] = p_batch[:, 0].view(B, 1, 1).expand(B, N, N)
-            inputs[..., 4] = p_batch[:, 4].view(B, 1, 1).expand(B, N, N)
-            inputs[..., 5] = p_batch[:, 2].view(B, 1, 1).expand(B, N, N)
+            inputs[..., 1] = exp(c1_v)                              # Diblock
+            inputs[..., 2] = exp(amplitude_to_channel(a_v))         # amplitude física
+            inputs[..., 3] = exp(b_v)                               # Kuhn
+            inputs[..., 4] = exp(c4_v)                              # Alternado
+            inputs[..., 5] = exp(u_v)                               # Flory-Huggins
             
             optimizer.zero_grad()
             phi_pred = model(inputs).squeeze(-1)

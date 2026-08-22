@@ -1,0 +1,33 @@
+  Sequência completa:
+
+  Local
+  python grf_generator.py    # ~15 min  -> data/pino_v3_grf_dataset.pt
+  python scft_solver.py      # ~1h      -> data/pino_v3_dataset_complete.pt (~1.8 GB)
+  git add -A && git commit && git push     # os 4 arquivos que mexi
+  O push é obrigatório: o notebook clona do GitHub, então sem ele o Kaggle pega o código velho e o dataset novo — que é a pior combinação possível, porque o unpack_params antigo não existe e o import
+  quebra na hora.
+
+  Kaggle — sobe só o .pt como Dataset (o código vem do clone), acelerador T4 x2, e duas células:
+
+  !git clone https://github.com/Lapsx/PINO_Polymer_Webmap.git
+  %cd PINO_Polymer_Webmap
+
+  import os, shutil
+  os.makedirs("data", exist_ok=True)
+  os.makedirs("weights", exist_ok=True)
+  shutil.copy("/kaggle/input/SEU-DATASET/pino_v3_dataset_complete.pt", "data/")
+
+  # Só na 2ª sessão em diante: retomar de onde parou
+  # shutil.copy("/kaggle/input/SEUS-PESOS/training_state.pth", "weights/")
+
+  !python pino_train_physics.py
+
+  Pontos de atenção:
+
+  - Não anexe os pesos de julho. Sem weights/, o script imprime "iniciando do zero", que é o certo. Se você anexar o pino_v3_phase5_physics.pth antigo, ele retoma de um estado pior que init aleatória.
+  - Para retomar entre sessões, baixe weights/training_state.pth no fim de cada uma e reanexe como Dataset. É ele que preserva o contador de época, o LR e o warm-up da física — o .pth sozinho não.
+  - batch e LR: se quiser os 1,8× de throughput na T4, são duas linhas em pino_train_physics.py — effective_batch_size = 8 → 32 e lr=1e-4 → 2e-4 (o LR sobe junto porque com batch 32 são 4× menos passos
+    por época). Deixei nos valores atuais porque isso muda a dinâmica de convergência e é decisão sua; se preferir, meça uma época com cada um na T4 antes.
+  - O dataset dá ~1,8 GB porque guarda dphi_dV, que a loss não usa (está lá só por compatibilidade do DataLoader). Dá para cortar para 1,2 GB, mas exige mexer no TensorDataset — não vale a pena a menos
+    que o upload esteja incomodando.
+

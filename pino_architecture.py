@@ -8,9 +8,10 @@ Backbone : Fourier Neural Operator 2D (FNO), 4 camadas espectrais.
 Física   : Equação de Edwards (Ground State Dominance) + Perda Sobolev H¹.
 
 Canais de entrada (8 = 6 explícitos + 2 coordenadas de grade):
-  [0] V(r)   — Potencial externo normalizado ∈ [-1, 1]; paredes: V = 10.0
+  [0] V(r)   — Potencial externo NORMALIZADO ∈ [-1, 1]; paredes: V = 10.0
   [1] c1(r)  — Intensidade de carga Diblock (escalar uniforme por amostra)
-  [2] c2(r)  — Reservado / zero  (kappa está implícito em V via Yukawa)
+  [2] A(r)   — Amplitude física do potencial, log-normalizada ∈ [0, 1]
+               (kappa continua implícito em V via Yukawa)
   [3] b(r)   — Comprimento de Kuhn (escalar uniforme por amostra)
   [4] c4(r)  — Intensidade de carga Alternado (escalar uniforme por amostra)
   [5] u(r)   — Parâmetro de Flory-Huggins (escalar uniforme por amostra)
@@ -19,9 +20,18 @@ Canais de entrada (8 = 6 explícitos + 2 coordenadas de grade):
 
 Saída: φ(r) ∈ ℝ⁺ — densidade polimérica via softplus, shape (B, Nx, Ny).
 
+Sobre o canal 2 (amplitude): o campo do canal 0 é sempre reescalado para [-1, 1] por
+amostra, o que apaga a magnitude absoluta do potencial — sem o canal 2, uma carga Q=1
+e uma carga Q=100 produzem entrada idêntica e portanto a mesma densidade. O potencial
+físico é reconstruído como V_fis = A · V_norm (as paredes, marcadas por V_norm > 9,
+não são reescaladas: o valor 10.0 é apenas um sentinela para a máscara de Dirichlet).
+
 Equação de Edwards (Ground State Dominance):
   (b²/6) ∇²φ(r) = [V_eff(r) + u·φ(r)] · φ(r)
-  V_eff = V − c1·2|V| − c4·0.1·|∇V|²
+  V_eff = V_fis − c1·2|V_fis| − c4·0.1·|∇V_fis|²
+
+`params` tem 6 colunas: [b, kappa, u, c1, c4, A]. Formatos antigos (3 ou 5 colunas)
+são aceitos por compatibilidade — c1/c4 viram 0 e A vira 1.0 (sem reescala).
 
 Nota sobre dphi_dV_true: mantido na assinatura da loss por compatibilidade com
 o DataLoader. A susceptibilidade térmica δφ/δV é capturada implicitamente
@@ -31,6 +41,68 @@ pela perda Sobolev H¹: ||∇(φ_pred − φ_true)||²_L2  via teorema de Parsev
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# ===========================================================================
+# 0. AMPLITUDE DO POTENCIAL — fonte única de verdade
+# ===========================================================================
+# Faixa amostrada em grf_generator.py. O teto fica abaixo do sentinela de parede
+# (9.0) para que A·V nunca seja confundido com uma parede.
+A_MIN = 0.2
+A_MAX = 8.0
+
+_LOG_A_MIN = float(torch.log10(torch.tensor(A_MIN)))
+_LOG_A_MAX = float(torch.log10(torch.tensor(A_MAX)))
+
+
+def amplitude_to_channel(A):
+    """Amplitude física → canal 2 ∈ [0, 1] (log-uniforme).
+
+    Usada pelo gerador, pelo treino e pelo backend. Se as três não usarem
+    exatamente esta função, o canal 2 vira ruído.
+    """
+    if not torch.is_tensor(A):
+        A = torch.tensor(A, dtype=torch.float32)
+    logA = torch.log10(torch.clamp(A, min=1e-6))
+    return torch.clamp((logA - _LOG_A_MIN) / (_LOG_A_MAX - _LOG_A_MIN), 0.0, 1.0)
+
+
+def channel_to_amplitude(c):
+    """Inversa de amplitude_to_channel."""
+    if not torch.is_tensor(c):
+        c = torch.tensor(c, dtype=torch.float32)
+    return torch.pow(10.0, c * (_LOG_A_MAX - _LOG_A_MIN) + _LOG_A_MIN)
+
+
+def apply_amplitude(v_norm, A):
+    """V_fis = A · V_norm, preservando o sentinela de parede (V_norm > 9 → 10.0).
+
+    Args:
+        v_norm: (B, Nx, Ny) potencial normalizado em [-1, 1] com paredes em 10.0
+        A     : (B, 1, 1) ou escalar — amplitude física
+    """
+    wall = v_norm > 9.0
+    return torch.where(wall, v_norm, A * v_norm)
+
+
+def unpack_params(params, device=None):
+    """Aceita params de 3, 5 ou 6 colunas e devolve [b, u, c1, c4, A] em (B,1,1).
+
+    3 colunas → [b, kappa, u]              (c1 = c4 = 0, A = 1)
+    5 colunas → [b, kappa, u, c1, c4]      (A = 1)
+    6 colunas → [b, kappa, u, c1, c4, A]
+    """
+    if device is not None:
+        params = params.to(device)
+    n = params.shape[1]
+    view = lambda t: t.view(-1, 1, 1)
+    b = view(params[:, 0])
+    u = view(params[:, 2])
+    zero = torch.zeros_like(b)
+    c1 = view(params[:, 3]) if n >= 5 else zero
+    c4 = view(params[:, 4]) if n >= 5 else zero
+    A = view(params[:, 5]) if n >= 6 else torch.ones_like(b)
+    return b, u, c1, c4, A
 
 
 # ===========================================================================
@@ -222,12 +294,12 @@ def sobolev_physics_loss(phi_pred, phi_true, v_tensor, dphi_dV_true,
     l2_loss = torch.mean(diff_sq / true_sq)
 
     # ── 2. PDE de Edwards mascarada nas paredes ─────────────────────────
-    b_val  = params[:, 0].view(-1, 1, 1)
-    u_val  = params[:, 2].view(-1, 1, 1)
-    c1_val = params[:, 3].view(-1, 1, 1)
-    c4_val = params[:, 4].view(-1, 1, 1)
+    b_val, u_val, c1_val, c4_val, a_val = unpack_params(params)
 
-    v_eff   = _compute_v_eff(v_tensor, c1_val, c4_val, kx, kz)
+    # O resíduo tem que ser avaliado no potencial FÍSICO: v_tensor é o campo
+    # reescalado para [-1, 1], então sem isto a física contradiz o dado.
+    v_phys  = apply_amplitude(v_tensor, a_val)
+    v_eff   = _compute_v_eff(v_phys, c1_val, c4_val, kx, kz)
     pde_res = _edwards_residual(phi_pred, v_eff, u_val, b_val, k_sq_4pi2)
 
     # Mascarar paredes (Dirichlet: φ = 0 onde V ≥ 9.0)
@@ -264,7 +336,7 @@ def prepare_collocation_inputs(V_raw, params_col, device):
 
     Args:
         V_raw     : (B, N, N) tensor — potenciais brutos (não normalizados)
-        params_col: (B, 5)    tensor — [b, kappa, u, c1, c4]
+        params_col: (B, 5) ou (B, 6) — [b, kappa, u, c1, c4] (+ A)
         device    : torch.device
 
     Returns:
@@ -287,15 +359,17 @@ def prepare_collocation_inputs(V_raw, params_col, device):
     V_norm = (2.0 * (V_raw - v_min) / rng - 1.0).masked_fill(wall_mask, 10.0)
     V_norm    = V_norm.to(device)
 
-    # Monta tensor de inputs: [V, c1, 0, b, c4, u]
+    # Monta tensor de inputs: [V, c1, A, b, c4, u]
     pc = params_col.to(device)
+    b_v, u_v, c1_v, c4_v, a_v = unpack_params(pc)
+    exp = lambda t: t.expand(B, N, N)
     inputs = torch.zeros(B, N, N, 6, device=device)
     inputs[..., 0] = V_norm
-    inputs[..., 1] = pc[:, 3].view(B, 1, 1).expand(B, N, N)   # c1 (Diblock)
-    # canal 2 = 0: kappa implícito em V via Yukawa
-    inputs[..., 3] = pc[:, 0].view(B, 1, 1).expand(B, N, N)   # b  (Kuhn)
-    inputs[..., 4] = pc[:, 4].view(B, 1, 1).expand(B, N, N)   # c4 (Alternado)
-    inputs[..., 5] = pc[:, 2].view(B, 1, 1).expand(B, N, N)   # u  (Flory-Huggins)
+    inputs[..., 1] = exp(c1_v)                                # c1 (Diblock)
+    inputs[..., 2] = exp(amplitude_to_channel(a_v))           # A  (amplitude física)
+    inputs[..., 3] = exp(b_v)                                 # b  (Kuhn)
+    inputs[..., 4] = exp(c4_v)                                # c4 (Alternado)
+    inputs[..., 5] = exp(u_v)                                 # u  (Flory-Huggins)
 
     return inputs, V_norm
 
@@ -311,7 +385,7 @@ def collocation_pde_loss(phi_col, v_col_norm, params_col):
     Args:
         phi_col    : (B, N, N) — predição do modelo nos pontos de colocação
         v_col_norm : (B, N, N) — V normalizado (output de prepare_collocation_inputs)
-        params_col : (B, 5)    — [b, kappa, u, c1, c4] no device correto
+        params_col : (B, 5) ou (B, 6) — [b, kappa, u, c1, c4] (+ A) no device correto
 
     Returns:
         loss : escalar — PDE residual + conservação de massa
@@ -322,12 +396,10 @@ def collocation_pde_loss(phi_col, v_col_norm, params_col):
 
     kx, kz, k_sq_4pi2 = _spectral_ops(N, dev)
 
-    b_val  = params_col[:, 0].view(-1, 1, 1).to(dev)
-    u_val  = params_col[:, 2].view(-1, 1, 1).to(dev)
-    c1_val = params_col[:, 3].view(-1, 1, 1).to(dev)
-    c4_val = params_col[:, 4].view(-1, 1, 1).to(dev)
+    b_val, u_val, c1_val, c4_val, a_val = unpack_params(params_col, device=dev)
 
-    v_eff   = _compute_v_eff(v_col_norm, c1_val, c4_val, kx, kz)
+    v_phys  = apply_amplitude(v_col_norm, a_val)
+    v_eff   = _compute_v_eff(v_phys, c1_val, c4_val, kx, kz)
     pde_res = _edwards_residual(phi_col, v_eff, u_val, b_val, k_sq_4pi2)
 
     domain  = (v_col_norm < 9.0).float()
